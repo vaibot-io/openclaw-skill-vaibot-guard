@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-# Simple shim so SKILL.md can refer to a `vaibot-guard` binary.
-exec node "$(dirname "$0")/vaibot-guard.mjs" "$@"
