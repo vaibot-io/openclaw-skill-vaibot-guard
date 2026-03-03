@@ -238,14 +238,11 @@ async function cmdInstallLocal() {
   try {
     const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
     const SKILL_DIR = path.resolve(SCRIPT_DIR, "..");
-    const unitSrc = path.join(SKILL_DIR, "systemd", "user", "vaibot-guard.service");
     const envSrc = path.join(SKILL_DIR, "systemd", "user", "vaibot-guard.env");
 
-    // Clawhub may strip/disallow publishing `systemd/*/*.service` files.
-    // Store publish-safe templates under references/ and fall back to them.
-    const unitRefTemplate = path.join(SKILL_DIR, "references", "systemd", "user", "vaibot-guard.service.txt");
-
-    const unitTemplate = `[Unit]\nDescription=VAIBot Guard policy service (user)\nAfter=network-online.target openclaw-gateway.service\nWants=openclaw-gateway.service\nPartOf=openclaw-gateway.service\n\n[Service]\nType=simple\nWorkingDirectory=%h/clawd/skills/vaibot-guard\nEnvironmentFile=%h/.config/vaibot-guard/vaibot-guard.env\nExecStart=/usr/bin/env node scripts/vaibot-guard-service.mjs\nRestart=on-failure\nRestartSec=2\nNoNewPrivileges=true\nPrivateTmp=true\n\n[Install]\nWantedBy=default.target\n`;
+    // Option A: generate the systemd unit entirely in code.
+    // This avoids relying on shipping any `*.service` (or template) files in the skill package.
+    const unitTemplate = `[Unit]\nDescription=VAIBot Guard policy service (user)\nAfter=network-online.target openclaw-gateway.service\nWants=openclaw-gateway.service\nPartOf=openclaw-gateway.service\n\n[Service]\nType=simple\n# Clawhub installs to ~/clawd/skills/<slug> by default\nWorkingDirectory=%h/clawd/skills/vaibot-guard\nEnvironmentFile=%h/.config/vaibot-guard/vaibot-guard.env\nExecStart=/usr/bin/env node scripts/vaibot-guard-service.mjs\nRestart=on-failure\nRestartSec=2\n\n# Hardening (user-scope, safe defaults)\nNoNewPrivileges=true\nPrivateTmp=true\n\n[Install]\nWantedBy=default.target\n`;
 
     const envTemplate = `# VAIBot Guard (user service) environment\n\n# Required for service auth (recommended)\n# VAIBOT_GUARD_TOKEN=\n\n# Policy file\n# VAIBOT_POLICY_PATH=references/policy.default.json\n\n# Service bind\n# VAIBOT_GUARD_HOST=127.0.0.1\n# VAIBOT_GUARD_PORT=39111\n\n# Workspace + logs\n# VAIBOT_WORKSPACE=\n# VAIBOT_GUARD_LOG_DIR=\n\n# VAIBot anchoring\n# VAIBOT_API_URL=https://www.vaibot.io/api\n# VAIBOT_API_KEY=\n# VAIBOT_PROVE_MODEL=vaibot-guard\n# VAIBOT_PROVE_MODE=required\n\n# Checkpoint cadence\n# VAIBOT_MERKLE_CHECKPOINT_EVERY=50\n# VAIBOT_MERKLE_CHECKPOINT_EVERY_MS=600000\n`;
     const unitDstDir = path.join(os.homedir(), ".config", "systemd", "user");
@@ -262,17 +259,9 @@ async function cmdInstallLocal() {
     fs.mkdirSync(unitDstDir, { recursive: true });
     fs.mkdirSync(envDstDir, { recursive: true });
 
-    // Install unit file (overwrite).
-    // Preferred: ship a publish-safe template under references/.
-    // Fallback: embedded template.
-    if (fs.existsSync(unitSrc)) {
-      // In-repo install (not from Clawhub).
-      fs.copyFileSync(unitSrc, unitDst);
-    } else if (fs.existsSync(unitRefTemplate)) {
-      fs.copyFileSync(unitRefTemplate, unitDst);
-    } else {
-      fs.writeFileSync(unitDst, unitTemplate);
-    }
+    // Install unit file (overwrite). Generated from the embedded template so we
+    // don't depend on shipping any unit files in the skill package.
+    fs.writeFileSync(unitDst, unitTemplate);
 
     // Install env file only if it doesn't exist.
     if (!fs.existsSync(envDst)) {
