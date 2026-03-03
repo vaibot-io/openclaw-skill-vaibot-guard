@@ -2,6 +2,12 @@
 
 This runbook describes how to run `vaibot-guard-service.mjs` as a service.
 
+CLI usage note: do not assume an executable shim exists. Use:
+
+```bash
+node scripts/vaibot-guard.mjs <command> ...
+```
+
 Two options are provided:
 - **Local workstation mode (recommended for most OpenClaw installs):** user service (`systemctl --user`)
 - **VPS / production mode:** system service (`sudo systemctl`)

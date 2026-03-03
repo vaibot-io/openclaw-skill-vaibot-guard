@@ -21,13 +21,13 @@ See: `references/ops-runbook.md` and `systemd/`.
 Fast path (recommended): one-command local install:
 
 ```bash
-./scripts/vaibot-guard install-local
+node scripts/vaibot-guard.mjs install-local
 ```
 
 Or run the interactive configurator only (writes `~/.config/vaibot-guard/vaibot-guard.env` with `chmod 600`):
 
 ```bash
-./scripts/vaibot-guard configure
+node scripts/vaibot-guard.mjs configure
 ```
 
 ### 1) Start + smoke test
@@ -45,9 +45,9 @@ In another terminal:
 ```bash
 # 2) Precheck + exec (example)
 export VAIBOT_GUARD_TOKEN="change-me"
-./scripts/vaibot-guard precheck --intent '{"tool":"system.run","action":"exec","command":"/bin/echo","cwd":".","args":["hello"],"expectedOutputs":["hello"]}'
+node scripts/vaibot-guard.mjs precheck --intent '{"tool":"system.run","action":"exec","command":"/bin/echo","cwd":".","args":["hello"],"expectedOutputs":["hello"]}'
 
-./scripts/vaibot-guard exec --intent '{"tool":"system.run","action":"exec","command":"/bin/echo","cwd":".","args":["hello"],"expectedOutputs":["hello"]}' -- /bin/echo hello
+node scripts/vaibot-guard.mjs exec --intent '{"tool":"system.run","action":"exec","command":"/bin/echo","cwd":".","args":["hello"],"expectedOutputs":["hello"]}' -- /bin/echo hello
 ```
 
 Optional (recommended): install as a systemd service so it auto-starts with OpenClaw:
@@ -62,7 +62,7 @@ Optional (recommended): install as a systemd service so it auto-starts with Open
   - `POST /v1/decide/exec` (precheck)
   - `POST /v1/finalize`
   - `POST /api/proof` (Merkle inclusion proofs)
-- `scripts/vaibot-guard` — CLI shim (calls `node scripts/vaibot-guard.mjs`)
+- `scripts/vaibot-guard.mjs` — CLI entrypoint (run with `node scripts/vaibot-guard.mjs ...`)
 
 ## Required environment (MVP)
 
@@ -97,7 +97,7 @@ node scripts/vaibot-guard-service.mjs
 2) Before running any risky action, run a precheck:
 
 ```bash
-./scripts/vaibot-guard precheck --intent '<json>'
+node scripts/vaibot-guard.mjs precheck --intent '<json>'
 ```
 
 3) If the decision is `deny`, do not execute.
@@ -107,13 +107,13 @@ node scripts/vaibot-guard-service.mjs
 5) If the decision is `allow`, execute **only** via:
 
 ```bash
-./scripts/vaibot-guard exec --intent '<json>' -- <command...>
+node scripts/vaibot-guard.mjs exec --intent '<json>' -- <command...>
 ```
 
 6) Ensure the run is finalized (the `exec` command auto-finalizes on exit; you can also call it manually):
 
 ```bash
-./scripts/vaibot-guard finalize --run_id <id> --result '<json>'
+node scripts/vaibot-guard.mjs finalize --run_id <id> --result '<json>'
 ```
 
 ## Intent JSON (minimum fields)

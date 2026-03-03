@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import readline from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 
 const GUARD_HOST = process.env.VAIBOT_GUARD_HOST || "127.0.0.1";
 
@@ -235,10 +236,14 @@ async function cmdInstallLocal() {
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {
-    const SCRIPT_DIR = path.dirname(new URL(import.meta.url).pathname);
+    const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
     const SKILL_DIR = path.resolve(SCRIPT_DIR, "..");
     const unitSrc = path.join(SKILL_DIR, "systemd", "user", "vaibot-guard.service");
     const envSrc = path.join(SKILL_DIR, "systemd", "user", "vaibot-guard.env");
+
+    const unitTemplate = `[Unit]\nDescription=VAIBot Guard policy service (user)\nAfter=network-online.target openclaw-gateway.service\nWants=openclaw-gateway.service\nPartOf=openclaw-gateway.service\n\n[Service]\nType=simple\nWorkingDirectory=%h/clawd/skills/vaibot-guard\nEnvironmentFile=%h/.config/vaibot-guard/vaibot-guard.env\nExecStart=/usr/bin/env node scripts/vaibot-guard-service.mjs\nRestart=on-failure\nRestartSec=2\nNoNewPrivileges=true\nPrivateTmp=true\n\n[Install]\nWantedBy=default.target\n`;
+
+    const envTemplate = `# VAIBot Guard (user service) environment\n\n# Required for service auth (recommended)\n# VAIBOT_GUARD_TOKEN=\n\n# Policy file\n# VAIBOT_POLICY_PATH=references/policy.default.json\n\n# Service bind\n# VAIBOT_GUARD_HOST=127.0.0.1\n# VAIBOT_GUARD_PORT=39111\n\n# Workspace + logs\n# VAIBOT_WORKSPACE=\n# VAIBOT_GUARD_LOG_DIR=\n\n# VAIBot anchoring\n# VAIBOT_API_URL=https://www.vaibot.io/api\n# VAIBOT_API_KEY=\n# VAIBOT_PROVE_MODEL=vaibot-guard\n# VAIBOT_PROVE_MODE=required\n\n# Checkpoint cadence\n# VAIBOT_MERKLE_CHECKPOINT_EVERY=50\n# VAIBOT_MERKLE_CHECKPOINT_EVERY_MS=600000\n`;
     const unitDstDir = path.join(os.homedir(), ".config", "systemd", "user");
     const unitDst = path.join(unitDstDir, "vaibot-guard.service");
     const envDstDir = path.join(os.homedir(), ".config", "vaibot-guard");
@@ -253,12 +258,21 @@ async function cmdInstallLocal() {
     fs.mkdirSync(unitDstDir, { recursive: true });
     fs.mkdirSync(envDstDir, { recursive: true });
 
-    // Copy unit file (overwrite)
-    fs.copyFileSync(unitSrc, unitDst);
+    // Install unit file (overwrite). If packaged installs omit systemd templates,
+    // fall back to embedded templates.
+    if (fs.existsSync(unitSrc)) {
+      fs.copyFileSync(unitSrc, unitDst);
+    } else {
+      fs.writeFileSync(unitDst, unitTemplate);
+    }
 
-    // Copy env file only if it doesn't exist
+    // Install env file only if it doesn't exist.
     if (!fs.existsSync(envDst)) {
-      fs.copyFileSync(envSrc, envDst);
+      if (fs.existsSync(envSrc)) {
+        fs.copyFileSync(envSrc, envDst);
+      } else {
+        fs.writeFileSync(envDst, envTemplate);
+      }
       try { fs.chmodSync(envDst, 0o600); } catch {}
     }
 
