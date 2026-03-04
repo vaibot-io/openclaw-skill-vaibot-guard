@@ -1225,17 +1225,23 @@ const server = http.createServer(async (req, res) => {
         decision = decideTool({ sessionId, toolName, params, workspaceDir });
 
         // If policy requires approval, mint an approval record for chat-command resolution.
-        if (decision && decision.decision === "approve" && !decision.approvalId) {
-          const appr = createApproval({
-            sessionId,
-            kind: "tool",
-            reason: decision.reason || "Approval required",
-            request: {
-              toolName,
-              paramsHash,
-              paramsPreview: redactIntent(params),
-            },
-          });
+        if (decision && decision.decision === "approve") {
+          const existingId = decision.approvalId;
+          const already = existingId ? readApproval(existingId) : null;
+          const appr = already
+            ? already
+            : createApproval({
+                sessionId,
+                kind: "tool",
+                approvalId: existingId,
+                reason: decision.reason || "Approval required",
+                request: {
+                  toolName,
+                  paramsHash,
+                  paramsPreview: redactIntent(params),
+                },
+              });
+
           decision.approvalId = appr.approvalId;
           decision.expiresAt = appr.expiresAt;
           decision.scope = { paramsHash };

@@ -1,54 +1,85 @@
-# VAIBot-Guard
+---
+name: vaibot-guard
+description: Localhost policy guard + tamper-evident audit log for OpenClaw. Uses VAIBOT_GUARD_TOKEN; optional VAIBOT_API_KEY anchoring. Opt-in user-level install files.
+---
 
-Local policy guard + tamper-evident audit log for OpenClaw/VAIBot operations.
+# VAIBot-Guard (OpenClaw Skill)
 
-At a high level:
-- You run a **local Guard service** (`vaibot-guard-service`) on `127.0.0.1`.
-- OpenClaw (via a bridge plugin) or a CLI wrapper asks Guard **“is this tool call allowed?”**
-- Guard returns `allow | deny | approve` and writes an append-only **audit trail** under `.vaibot-guard/`.
+VAIBot-Guard is a **local** policy decision service that can gate OpenClaw operations and write a tamper-evident audit trail under `.vaibot-guard/`.
 
-## What this repo/package contains
+## Read this first (credentials + side effects)
 
-- `scripts/vaibot-guard-service.mjs` — HTTP service (policy decisions + audit + checkpoints)
-- `scripts/vaibot-guard.mjs` — CLI to install/configure/run precheck/exec/finalize/flush/proof
-- `references/` — policy + receipt/checkpoint schema docs
-- `systemd/` — example unit/env files (note: some registries strip `.service` files)
+### Sensitive credentials (treat as secrets)
 
-## HTTP API (current)
+- `VAIBOT_GUARD_TOKEN` — bearer token for Guard endpoints (recommended)
+- `VAIBOT_API_KEY` — bearer token used to anchor receipts to VAIBot `/prove` (optional)
 
-Health:
+### Persistent changes this skill may make (opt-in)
+
+Depending on which commands you choose to run, VAIBot-Guard may:
+
+- write an env file: `~/.config/vaibot-guard/vaibot-guard.env` (recommended `chmod 600`)
+- generate a **systemd user** unit: `~/.config/systemd/user/vaibot-guard.service`
+- write local logs/state: `${VAIBOT_GUARD_LOG_DIR}` (default: `${VAIBOT_WORKSPACE}/.vaibot-guard`)
+
+If you want **zero persistence**, run the service in the foreground with env vars set in your shell (see Manual Quick Start below).
+
+## HTTP API
+
 - `GET /health`
+- `POST /v1/decide/exec` + `POST /v1/finalize` (shell exec flows)
+- `POST /v1/decide/tool` + `POST /v1/finalize/tool` (generic tool gating; used by OpenClaw bridge plugin)
+- `POST /v1/flush` (checkpoint flush)
+- `POST /api/proof` (Merkle inclusion proofs)
 
-Exec decisions (shell commands):
-- `POST /v1/decide/exec`
-- `POST /v1/finalize`
+Auth:
+- If `VAIBOT_GUARD_TOKEN` is set, protected endpoints require `Authorization: Bearer <token>`.
 
-Generic tool decisions (used by the OpenClaw bridge plugin):
-- `POST /v1/decide/tool`
-- `POST /v1/finalize/tool`
+## Manual Quick Start (recommended for evaluation)
 
-Ops / audit:
-- `POST /v1/flush` — attempt to flush/anchor checkpoints
-- `POST /api/proof` — inclusion proofs for checkpointed leaves
+This path avoids installing systemd units or writing config files.
 
-> Auth: if `VAIBOT_GUARD_TOKEN` is set, protected endpoints require `Authorization: Bearer <token>`.
+1) From this directory, set env and start the service:
 
-## Quick start (local workstation)
+```bash
+export VAIBOT_GUARD_HOST=127.0.0.1
+export VAIBOT_GUARD_PORT=39111
+export VAIBOT_POLICY_PATH=references/policy.default.json
+export VAIBOT_WORKSPACE="$(pwd)"
+export VAIBOT_GUARD_LOG_DIR="$VAIBOT_WORKSPACE/.vaibot-guard"
 
-### 1) Install local service + config (recommended)
+# Recommended: set a token so endpoints require auth
+export VAIBOT_GUARD_TOKEN="<generate-a-random-token>"
 
-From this directory:
+node scripts/vaibot-guard-service.mjs
+```
+
+2) Smoke test:
+
+```bash
+curl -s http://127.0.0.1:39111/health
+```
+
+3) Try a decision:
+
+```bash
+node scripts/vaibot-guard.mjs precheck --intent '{"tool":"system.run","action":"exec","command":"/bin/echo","cwd":".","args":["hello"]}'
+```
+
+## Optional: user-level persistence (systemd user service)
+
+If you want Guard to run continuously, use the installer helper:
 
 ```bash
 node scripts/vaibot-guard.mjs install-local
 ```
 
-This will:
+This **will**:
 - create/update `~/.config/vaibot-guard/vaibot-guard.env` (chmod 600)
-- generate a `VAIBOT_GUARD_TOKEN` if missing
-- generate a **systemd user** unit (so it can run continuously)
+- generate `VAIBOT_GUARD_TOKEN` if missing
+- generate `~/.config/systemd/user/vaibot-guard.service`
 
-Start it:
+Then:
 
 ```bash
 systemctl --user daemon-reload
@@ -56,35 +87,14 @@ systemctl --user enable --now vaibot-guard
 systemctl --user status vaibot-guard --no-pager
 ```
 
-### 2) Dev-mode foreground run (fast check)
+## OpenClaw enforcement (recommended)
 
-```bash
-node scripts/vaibot-guard-service.mjs
-```
+For real enforcement (intercepting tool calls regardless of what the model tries), use the **Gateway plugin bridge**.
 
-Then in another terminal:
-
-```bash
-curl -s http://127.0.0.1:39111/health | jq
-```
-
-## Wiring into OpenClaw
-
-VAIBot-Guard can be used two ways:
-
-1) **Skill/CLI wrapper approach** (good for early testing)
-- precheck + exec wrappers call the Guard service
-
-2) **Gateway plugin bridge (recommended for real enforcement)**
-- an OpenClaw Gateway plugin intercepts **all tool calls** and asks Guard for a decision
-- default posture can be `enforce` (fail-closed) or `observe` (log-only)
-
-If you are using the OpenClaw bridge plugin, see:
+See:
 - `references/openclaw-bridge.md`
 
-(We intentionally do **not** ship an auto-wiring script in the ClawHub skill artifact.)
-
-## Configuration / environment
+## Configuration reference
 
 Common env vars:
 
@@ -95,30 +105,17 @@ Common env vars:
 - `VAIBOT_WORKSPACE` (default `process.cwd()`)
 - `VAIBOT_GUARD_LOG_DIR` (default `${VAIBOT_WORKSPACE}/.vaibot-guard`)
 
-Anchoring (optional):
-- `VAIBOT_API_URL`
-- `VAIBOT_API_KEY`
+Anchoring/proving (optional):
+
+- `VAIBOT_API_URL` (e.g. `https://www.vaibot.io/api`)
+- `VAIBOT_API_KEY` (only required when `VAIBOT_PROVE_MODE=required`)
 - `VAIBOT_PROVE_MODE` (`off|best-effort|required`, default `best-effort`)
 
-Checkpoint cadence:
-- `VAIBOT_MERKLE_CHECKPOINT_EVERY` (default `50`)
-- `VAIBOT_MERKLE_CHECKPOINT_EVERY_MS` (default `600000`)
+If `VAIBOT_PROVE_MODE=required`, Guard becomes **fail-closed** when it cannot anchor proofs.
 
-## Policy
+## More docs
 
-Default policy lives at:
-- `references/policy.default.json`
-
-Docs:
-- `references/policy.md`
-- `references/receipt-schema.md`
-- `references/checkpoint-schema.md`
-- `references/inclusion-proofs.md`
-- `references/required-mode.md`
-
-
-## Security notes
-
-- Treat `VAIBOT_GUARD_TOKEN` and `VAIBOT_API_KEY` as secrets.
-- If you set `VAIBOT_PROVE_MODE=required`, Guard becomes **fail-closed** when proof anchoring cannot be performed.
-- The tool endpoints are designed for localhost; think carefully before exposing them remotely.
+- `README.md`
+- `SECURITY.md`
+- `references/persistence-and-install.md`
+- `references/ops-runbook.md`
