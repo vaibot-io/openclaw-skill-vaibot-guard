@@ -9,8 +9,8 @@ node scripts/vaibot-guard.mjs <command> ...
 ```
 
 Two options are provided:
-- **Local workstation mode (recommended for most OpenClaw installs):** user service (`systemctl --user`)
-- **VPS / production mode:** system service (`sudo systemctl`)
+- **Local workstation mode (recommended):** user service (`systemctl --user`)
+- **VPS / production mode:** system service (`sudo systemctl`) — **templates are not shipped in the ClawHub skill artifact**; generate/copy your own unit file (see notes below).
 
 ## Shared environment variables
 
@@ -68,33 +68,49 @@ loginctl enable-linger $USER
 
 ## Option B — System service (VPS/production)
 
-### Install
+We intentionally **do not ship** `systemd/system/*` unit files in the ClawHub skill artifact (scanner/persistence concerns).
 
-Create a dedicated user:
+If you need a system-wide service on a VPS/production host, use this as a starting point:
+
+1) Create a dedicated user:
 
 ```bash
 sudo useradd --system --create-home --home-dir /var/lib/vaibot-guard --shell /usr/sbin/nologin vaibot-guard
 ```
 
-Copy unit + env:
+2) Create `/etc/vaibot-guard/vaibot-guard.env` and set required env vars (at minimum `VAIBOT_GUARD_TOKEN`, `VAIBOT_POLICY_PATH`, `VAIBOT_GUARD_LOG_DIR`).
+
+3) Create a unit file (example skeleton):
+
+```ini
+[Unit]
+Description=VAIBot Guard policy service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vaibot-guard
+WorkingDirectory=/var/lib/vaibot-guard
+EnvironmentFile=/etc/vaibot-guard/vaibot-guard.env
+ExecStart=/usr/bin/env node /path/to/vaibot-guard/scripts/vaibot-guard-service.mjs
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+```
+
+4) Enable + start:
 
 ```bash
-sudo mkdir -p /etc/vaibot-guard
-sudo cp systemd/system/vaibot-guard.env /etc/vaibot-guard/vaibot-guard.env
-sudo $EDITOR /etc/vaibot-guard/vaibot-guard.env
-
-sudo cp systemd/system/vaibot-guard.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now vaibot-guard
 sudo systemctl status vaibot-guard
 ```
 
-### Logs
+Logs:
 
 ```bash
 sudo journalctl -u vaibot-guard -f
 ```
-
-### Hardening
-
-The provided unit includes basic systemd hardening. Adjust if you need filesystem writes outside the configured log dir.

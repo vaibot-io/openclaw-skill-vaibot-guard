@@ -79,13 +79,10 @@ VAIBot-Guard can be used two ways:
 - an OpenClaw Gateway plugin intercepts **all tool calls** and asks Guard for a decision
 - default posture can be `enforce` (fail-closed) or `observe` (log-only)
 
-If you have a bridge wiring script:
+If you are using the OpenClaw bridge plugin, see:
+- `references/openclaw-bridge.md`
 
-```bash
-export VAIBOT_GUARD_TOKEN="..."
-node scripts/wire-openclaw-bridge.mjs
-openclaw gateway restart
-```
+(We intentionally do **not** ship an auto-wiring script in the ClawHub skill artifact.)
 
 ## Configuration / environment
 
