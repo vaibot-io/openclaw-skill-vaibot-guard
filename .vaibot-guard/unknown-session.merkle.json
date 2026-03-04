@@ -1,13 +1,15 @@
 {
-  "count": 6,
+  "count": 18,
   "frontier": [
     null,
-    "3e7edc62d897c6b207ff370720eb906469510e11288151d5f1648c28c3c87854",
-    "173c1c35cd3e67bddda47c533b91d4a6ea5cb1f0112315cee7e4e61b1cbe5e7a"
+    "e193e3240e1a0f34090c9529746b5b8b8c1270b8cf5f91c57d644aeb0ba5a0ba",
+    null,
+    null,
+    "88aa345d9854d4d4f3a29c6ae5ea718437ab5af9bed9fb5d3568ebe3fc23642c"
   ],
-  "lastCheckpointSeq": 4,
-  "lastCheckpointHash": "22e4fc45652ba3983e9fe9a1abac7a10c627de430c8cddc1768a2647259b0a71",
-  "lastCheckpointAtMs": 1772519754420,
-  "lastCheckpointEventCount": 6,
-  "lastAnchoredSeq": 4
+  "lastCheckpointSeq": 8,
+  "lastCheckpointHash": "3d5201d64ae6839e34a1731b074256c21afdbd333f1ebd8a4eea7869ec74f9b0",
+  "lastCheckpointAtMs": 1772537980356,
+  "lastCheckpointEventCount": 18,
+  "lastAnchoredSeq": 8
 }

@@ -12,19 +12,26 @@ This skill provides a **local policy decision service** plus a `vaibot-guard` CL
 - **Local workstation mode (recommended default):** run `vaibot-guard` as a **systemd user service** (`systemctl --user`), optionally coupled to `openclaw-gateway.service` so it starts whenever OpenClaw starts (typically at login).
 - **VPS / production mode:** run `vaibot-guard` as a **systemd system service** (`sudo systemctl`) under a dedicated user, with stricter sandboxing and boot-time startup.
 
-See: `references/ops-runbook.md` and `systemd/`.
+See: `references/ops-runbook.md`.
+
+Note: some registries/packagers may strip `*.service` files. This skill’s `install-local` command generates the **user** unit file at install time, so the Clawhub-installed package does not need to include `systemd/*/*.service`.
 
 ## Quick Start (local workstation)
 
-### 0) One-time configure (recommended)
+### 0) One-time install + configure (recommended)
 
-Fast path (recommended): one-command local install:
+Fast path (recommended): one-command local install.
+
+This will:
+- install a **systemd user service** (`~/.config/systemd/user/vaibot-guard.service`)
+- create `~/.config/vaibot-guard/vaibot-guard.env` (mode `0600`) if missing
+- **auto-generate `VAIBOT_GUARD_TOKEN`** if it isn’t already set
 
 ```bash
 node scripts/vaibot-guard.mjs install-local
 ```
 
-Or run the interactive configurator only (writes `~/.config/vaibot-guard/vaibot-guard.env` with `chmod 600`):
+Or run the interactive configurator only (writes/updates `~/.config/vaibot-guard/vaibot-guard.env` with `chmod 600`):
 
 ```bash
 node scripts/vaibot-guard.mjs configure
@@ -32,11 +39,15 @@ node scripts/vaibot-guard.mjs configure
 
 ### 1) Start + smoke test
 
+#### Foreground (quick dev check)
+
 From this skill directory:
 
 ```bash
 # 1) Start the guard service (foreground)
-export VAIBOT_GUARD_TOKEN="change-me"
+# Reads VAIBOT_GUARD_TOKEN (and other settings) from:
+#   - env vars, or
+#   - ~/.config/vaibot-guard/vaibot-guard.env
 node scripts/vaibot-guard-service.mjs
 ```
 
@@ -44,16 +55,37 @@ In another terminal:
 
 ```bash
 # 2) Precheck + exec (example)
-export VAIBOT_GUARD_TOKEN="change-me"
 node scripts/vaibot-guard.mjs precheck --intent '{"tool":"system.run","action":"exec","command":"/bin/echo","cwd":".","args":["hello"],"expectedOutputs":["hello"]}'
 
 node scripts/vaibot-guard.mjs exec --intent '{"tool":"system.run","action":"exec","command":"/bin/echo","cwd":".","args":["hello"],"expectedOutputs":["hello"]}' -- /bin/echo hello
 ```
 
-Optional (recommended): install as a systemd service so it auto-starts with OpenClaw:
+#### Systemd (recommended)
 
-- Local mode (user service): see `references/ops-runbook.md` + `systemd/user/`
-- VPS mode (system service): see `references/ops-runbook.md` + `systemd/system/`
+After running `install-local`, you can manage it with:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now vaibot-guard
+systemctl --user status vaibot-guard --no-pager
+```
+
+Notes:
+- `install-local` **generates** the user `.service` unit from an embedded template (so publishing/installing the skill does not need to ship `systemd/*/*.service` files).
+- VPS/system service deployment is still supported; see `references/ops-runbook.md`.
+
+### 2) (Optional) Wire VAIBot Guard enforcement into OpenClaw (plugin bridge)
+
+If you are using the `vaibot-guard-bridge` OpenClaw plugin/tool approach (deny `system.run`, allow `vaibot_exec`), use:
+
+```bash
+# VAIBOT_GUARD_TOKEN must match what your running guard service expects.
+export VAIBOT_GUARD_TOKEN="..."
+node scripts/wire-openclaw-bridge.mjs
+
+# then restart gateway
+openclaw gateway restart
+```
 
 ## Components
 
