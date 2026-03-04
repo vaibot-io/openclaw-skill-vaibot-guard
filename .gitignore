@@ -1,1 +1,2 @@
-.vaibot-guard/**
+# VAIBot-Guard local runtime logs/state (never commit)
+.vaibot-guard/

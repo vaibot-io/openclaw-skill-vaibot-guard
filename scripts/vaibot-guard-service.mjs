@@ -354,6 +354,154 @@ function decideExec({ sessionId, cmd, args, intent }) {
   return { decision: "allow", reason: "Allowed by baseline policy" };
 }
 
+// ---------------------------------------------------------------------------
+// Tool (generic) decisions — used by the Gateway bridge plugin.
+// ---------------------------------------------------------------------------
+
+function extractPathsFromToolParams(params) {
+  // Heuristic: common path keys used by OpenClaw tools.
+  const keys = [
+    "path",
+    "file_path",
+    "filePath",
+    "oldPath",
+    "newPath",
+    "directory",
+    "cwd",
+    "outPath",
+    "jsonlPath",
+  ];
+
+  const out = [];
+  if (!params || typeof params !== "object") return out;
+
+  for (const k of keys) {
+    const v = params[k];
+    if (typeof v === "string" && v.trim()) out.push(v);
+    if (Array.isArray(v)) {
+      for (const item of v) if (typeof item === "string" && item.trim()) out.push(item);
+    }
+  }
+
+  return out;
+}
+
+function extractUrlFromToolParams(params) {
+  if (!params || typeof params !== "object") return "";
+  const v = params.url || params.targetUrl || params.target_url;
+  return typeof v === "string" ? v : "";
+}
+
+function classifyToolRisk({ toolName, params, workspaceDir }) {
+  // MVP risk classes: low | high
+  // This is intentionally conservative: we mark outbound/network/mutation as high.
+
+  const tn = String(toolName || "").toLowerCase();
+  const url = extractUrlFromToolParams(params);
+
+  // Network tools
+  if (url && /^(https?:)?\/\//i.test(url)) {
+    const allowlisted = isDomainAllowlisted(url);
+    return allowlisted
+      ? { risk: "high", reason: "network destination present (allowlisted)" }
+      : { risk: "high", reason: "network destination not allowlisted" };
+  }
+  if (tn.includes("web_fetch") || tn.includes("browser") || tn.includes("fetch")) {
+    return { risk: "high", reason: "network/browsing tool" };
+  }
+
+  // Explicit outbound messaging
+  if (tn.startsWith("message") || tn.includes("message")) {
+    return { risk: "high", reason: "outbound messaging tool" };
+  }
+
+  // Shell / remote execution
+  if (tn === "exec" || tn.includes("exec") || tn.includes("run")) {
+    return { risk: "high", reason: "execution tool" };
+  }
+
+  // File mutations (heuristic by tool name)
+  if (/(^|\b)(write|edit|patch|apply|delete|rm|mkdir|upload)(\b|$)/i.test(tn)) {
+    return { risk: "high", reason: "file mutation tool" };
+  }
+
+  // Reads are usually low risk, but reading denied paths is sensitive.
+  if (tn === "read" || tn.includes("read")) {
+    const paths = extractPathsFromToolParams(params);
+    const anyDenied = paths.some((p) => isDeniedPath(p));
+    if (anyDenied) return { risk: "high", reason: "read touches denied path" };
+    return { risk: "low", reason: "read-only tool" };
+  }
+
+  return { risk: "low", reason: "default low risk" };
+}
+
+function decideTool({ sessionId, toolName, params, workspaceDir }) {
+  const tn = String(toolName || "");
+  const joined = tn + " " + (() => {
+    try {
+      return JSON.stringify(params || {});
+    } catch {
+      return "{unserializable:true}";
+    }
+  })();
+
+  // Token posture (applies across all tools)
+  const deny = matchToken(DENY_TOKENS, joined);
+  if (deny) return { decision: "deny", reason: `Denied token: ${deny}` };
+
+  const approve = matchToken(APPROVE_TOKENS, joined);
+  if (approve) return { decision: "approve", reason: `Approval required for token: ${approve}`, approvalId: `appr_${randomUUID()}` };
+
+  // Tool-specific posture
+  const lower = tn.toLowerCase();
+
+  // Outbound messaging: default approval gate.
+  if (lower.startsWith("message") || lower.includes("message")) {
+    return { decision: "approve", reason: "Outbound messaging requires approval", approvalId: `appr_${randomUUID()}` };
+  }
+
+  // Network/browsing: allow allowlisted destinations, otherwise require approval.
+  const url = extractUrlFromToolParams(params);
+  if (url) {
+    if (!isDomainAllowlisted(url)) {
+      return { decision: "approve", reason: "Network destination not allowlisted", approvalId: `appr_${randomUUID()}` };
+    }
+    return { decision: "allow", reason: "Allowlisted network destination" };
+  }
+
+  // File mutation: deny/approve based on workspace boundary + denied paths.
+  if (/(^|\b)(write|edit|delete|upload)(\b|$)/i.test(lower)) {
+    const paths = extractPathsFromToolParams(params);
+    for (const p of paths) {
+      const r = resolveIntentPath(p, workspaceDir);
+      if (isDeniedPath(r.abs) || isDeniedPath(r.full)) {
+        if (FILE_MUTATION_DENIED_PATH_ACTION === "approve") {
+          return { decision: "approve", reason: "File mutation touches denied path", approvalId: `appr_${randomUUID()}` };
+        }
+        return { decision: "deny", reason: "File mutation touches denied path" };
+      }
+      if (r.unresolved || !isInsideWorkspace(r.full)) {
+        if (FILE_MUTATION_OUTSIDE_WORKSPACE_ACTION === "approve") {
+          return { decision: "approve", reason: "File mutation outside workspace", approvalId: `appr_${randomUUID()}` };
+        }
+        return { decision: "deny", reason: "File mutation outside workspace" };
+      }
+    }
+  }
+
+  // Reads: allow by default, but reading denied paths requires approval.
+  if (lower === "read" || lower.includes("read")) {
+    const paths = extractPathsFromToolParams(params);
+    const anyDenied = paths.some((p) => isDeniedPath(p));
+    if (anyDenied) return { decision: "approve", reason: "Read touches denied path", approvalId: `appr_${randomUUID()}` };
+    return { decision: "allow", reason: "Allowed read" };
+  }
+
+  // Default allow (keeps UX smooth). High-risk tools should be handled by the cases above.
+  return { decision: "allow", reason: "Allowed by baseline tool policy" };
+}
+
 function postVaibotProve({ receipt, idempotencyKey }) {
   if (VAIBOT_PROVE_MODE === "off") return Promise.resolve(null);
   if (!VAIBOT_API_URL || !VAIBOT_API_KEY) return Promise.resolve(null);
@@ -860,6 +1008,166 @@ const server = http.createServer(async (req, res) => {
       writeRunContext(runId, { sessionId, risk, intent, decision, precheckAudit: audit, ts: nowIso(), policyVersion: POLICY.version });
 
       return json(res, 200, { ok: true, runId, risk, decision, audit, prove });
+    }
+
+    if (req.method === "POST" && req.url === "/v1/decide/tool") {
+      if (!requireAuth(req, res)) return;
+      const raw = await readBody(req);
+      let input;
+      try {
+        input = JSON.parse(raw || "{}");
+      } catch {
+        return json(res, 400, { ok: false, error: "Invalid JSON" });
+      }
+
+      const sessionId = String(input.sessionId || "unknown-session");
+      const toolName = String(input.toolName || "");
+      const params = input.params && typeof input.params === "object" ? input.params : {};
+      const workspaceDir = String(input.workspaceDir || input.cwd || "");
+
+      if (!toolName) return json(res, 400, { ok: false, error: "Missing toolName" });
+
+      const risk = classifyToolRisk({ toolName, params, workspaceDir });
+      const decision = decideTool({ sessionId, toolName, params, workspaceDir });
+      const runId = `run_${randomUUID()}`;
+
+      const eventId = randomUUID();
+      const audit = appendAudit({
+        ts: nowIso(),
+        eventId,
+        kind: "tool.precheck",
+        sessionId,
+        runId,
+        toolName,
+        params: redactIntent(params),
+        risk,
+        decision,
+      });
+
+      // Prove the *precheck receipt* (best-effort unless VAIBOT_PROVE_MODE=required).
+      let prove = null;
+      let proveError = null;
+      try {
+        const receipt = {
+          schema: "vaibot-guard/receipt@0.1",
+          kind: "tool",
+          ts: nowIso(),
+          runId,
+          sessionId,
+          policyVersion: POLICY.version,
+          risk,
+          intent: { toolName, params: redactIntent(params), workspaceDir },
+          decision,
+          result: null,
+          audit,
+        };
+        prove = await postVaibotProve({ receipt, idempotencyKey: runId + ":precheck" });
+      } catch (e) {
+        proveError = e?.message || String(e);
+        prove = { ok: false, error: proveError };
+      }
+
+      if (VAIBOT_PROVE_MODE === "required") {
+        if (!VAIBOT_API_URL || !VAIBOT_API_KEY) {
+          return json(res, 200, {
+            ok: true,
+            runId,
+            risk,
+            decision: { decision: "deny", reason: "VAIBOT_PROVE_MODE=required but VAIBOT_API_URL/VAIBOT_API_KEY not configured" },
+            audit,
+            prove,
+          });
+        }
+        if (proveError || (prove && prove.ok === false)) {
+          return json(res, 200, {
+            ok: true,
+            runId,
+            risk,
+            decision: { decision: "deny", reason: `VAIBOT_PROVE_MODE=required but /api/prove failed: ${proveError || prove?.error || "unknown"}` },
+            audit,
+            prove,
+          });
+        }
+      }
+
+      writeRunContext(runId, {
+        sessionId,
+        risk,
+        intent: { toolName, params: redactIntent(params), workspaceDir },
+        decision,
+        precheckAudit: audit,
+        ts: nowIso(),
+        policyVersion: POLICY.version,
+      });
+
+      return json(res, 200, { ok: true, runId, risk, decision, audit, prove });
+    }
+
+    if (req.method === "POST" && req.url === "/v1/finalize/tool") {
+      if (!requireAuth(req, res)) return;
+      const raw = await readBody(req);
+      let input;
+      try {
+        input = JSON.parse(raw || "{}");
+      } catch {
+        return json(res, 400, { ok: false, error: "Invalid JSON" });
+      }
+
+      const sessionId = String(input.sessionId || "unknown-session");
+      const runId = String(input.runId || "");
+      const result = input.result;
+
+      if (!runId) return json(res, 400, { ok: false, error: "Missing runId" });
+
+      const ctx1 = readRunContext(runId);
+      const effectiveSessionId = String(ctx1?.sessionId || sessionId || "unknown-session");
+
+      const eventId = randomUUID();
+      const audit = appendAudit({
+        ts: nowIso(),
+        eventId,
+        kind: "tool.finalize",
+        sessionId: effectiveSessionId,
+        runId,
+        result: redactIntent(result),
+      });
+
+      let prove = null;
+      let proveError = null;
+      try {
+        const ctx = readRunContext(runId);
+        const receipt = {
+          schema: "vaibot-guard/receipt@0.1",
+          kind: "tool",
+          ts: nowIso(),
+          runId,
+          sessionId: effectiveSessionId,
+          policyVersion: POLICY.version,
+          risk: ctx?.risk ?? null,
+          intent: ctx?.intent ?? null,
+          decision: ctx?.decision ?? null,
+          result: redactIntent(result),
+          audit,
+          precheckAudit: ctx?.precheckAudit ?? null,
+        };
+        prove = await postVaibotProve({ receipt, idempotencyKey: runId + ":finalize" });
+      } catch (e) {
+        proveError = e?.message || String(e);
+        prove = { ok: false, error: proveError };
+      }
+
+      if (VAIBOT_PROVE_MODE === "required") {
+        if (!VAIBOT_API_URL || !VAIBOT_API_KEY) {
+          return json(res, 500, { ok: false, error: "VAIBOT_PROVE_MODE=required but VAIBOT_API_URL/VAIBOT_API_KEY not configured", audit, prove });
+        }
+        if (proveError || (prove && prove.ok === false)) {
+          return json(res, 500, { ok: false, error: `VAIBOT_PROVE_MODE=required but /api/prove finalize failed: ${proveError || prove?.error || "unknown"}`, audit, prove });
+        }
+      }
+
+      deleteRunContext(runId);
+
+      return json(res, 200, { ok: true, audit, prove });
     }
 
     if (req.method === "POST" && req.url === "/v1/finalize") {
