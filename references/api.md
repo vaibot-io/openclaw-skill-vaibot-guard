@@ -86,6 +86,23 @@ Response:
 
 These endpoints are used by the OpenClaw Gateway bridge plugin that intercepts tool calls.
 
+### Approvals (chat-command UX)
+
+When Guard returns `decision=approve`, it also returns an `approvalId` (single-use) and an `expiresAt`.
+
+To support human-in-the-loop approval:
+
+- `POST /v1/approvals/list` — list **pending** approvals (optionally filtered by `sessionId`)
+- `POST /v1/approvals/resolve` — approve/deny a specific `approvalId`
+
+After approval, the caller redeems approval by including:
+
+```json
+{ "approval": { "approvalId": "appr_..." } }
+```
+
+in the next `/v1/decide/tool` request. Successful redemption marks the approval as **used** (single-use).
+
 ### `POST /v1/decide/tool`
 
 Precheck a generic tool call.
@@ -128,6 +145,34 @@ Request body:
 
 Response:
 - `{ ok: true, audit, prove }` (or error on required prove failure).
+
+### `POST /v1/approvals/list`
+
+Request body:
+
+```json
+{ "sessionId": "<optional>" }
+```
+
+Response:
+
+```json
+{ "ok": true, "approvals": [ { "approvalId": "appr_...", "status": "pending", "expiresAt": "...", "reason": "...", "request": { "toolName": "...", "paramsHash": "sha256:..." } } ] }
+```
+
+### `POST /v1/approvals/resolve`
+
+Request body:
+
+```json
+{ "approvalId": "appr_...", "action": "approve|deny" }
+```
+
+Response:
+
+```json
+{ "ok": true, "approvalId": "appr_...", "status": "approved|denied" }
+```
 
 ## Ops endpoints
 

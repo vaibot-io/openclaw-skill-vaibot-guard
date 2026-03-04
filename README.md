@@ -91,6 +91,16 @@ systemctl --user status vaibot-guard --no-pager
 
 For real enforcement (intercepting tool calls regardless of what the model tries), use the **Gateway plugin bridge**.
 
+### Approvals in chat (recommended UX)
+
+When Guard returns `approve`, resolve it directly in chat using the bridge plugin commands:
+
+- `/guard approvals`
+- `/guard approve <approvalId>`
+- `/guard deny <approvalId>`
+
+Approvals are **single-use** and time-limited (TTL).
+
 See:
 - `references/openclaw-bridge.md`
 

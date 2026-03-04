@@ -16,6 +16,13 @@ This repo’s companion plugin project:
   - `POST /v1/decide/tool`
 - Best-effort finalize/audit:
   - `POST /v1/finalize/tool`
+- Human-in-the-loop approvals:
+  - when Guard returns `approve`, the bridge blocks the tool call and prompts the user
+  - user runs chat commands:
+    - `/guard approvals`
+    - `/guard approve <approvalId>`
+    - `/guard deny <approvalId>`
+  - the bridge redeems the approval on the next identical tool call (single-use)
 
 ## Notes on UX
 
