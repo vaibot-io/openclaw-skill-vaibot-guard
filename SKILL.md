@@ -108,7 +108,7 @@ Common env vars:
 Anchoring/proving (optional):
 
 - `VAIBOT_API_URL` (e.g. `https://www.vaibot.io/api`)
-- `VAIBOT_API_KEY`
+- `VAIBOT_API_KEY` (only required when `VAIBOT_PROVE_MODE=required`)
 - `VAIBOT_PROVE_MODE` (`off|best-effort|required`, default `best-effort`)
 
 If `VAIBOT_PROVE_MODE=required`, Guard becomes **fail-closed** when it cannot anchor proofs.

@@ -211,13 +211,20 @@ async function maybeOnboard() {
   }
 
   const current = parseEnvFile(envFile);
+  const proveMode = String(process.env.VAIBOT_PROVE_MODE || current.VAIBOT_PROVE_MODE || "best-effort").trim();
   const hasApiKey = !!(process.env.VAIBOT_API_KEY || current.VAIBOT_API_KEY);
 
-  // If no api key, offer onboarding.
-  if (!hasApiKey) {
+  // Only prompt for VAIBOT_API_KEY if the operator explicitly configured fail-closed proving.
+  if (proveMode === "required" && !hasApiKey) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     try {
-      const ans = (await rl.question(`No VAIBOT_API_KEY found (env or ${envFile}). Run ./scripts/vaibot-guard configure now? [y/N]: `)).trim().toLowerCase();
+      const ans = (
+        await rl.question(
+          `VAIBOT_PROVE_MODE=required but no VAIBOT_API_KEY found (env or ${envFile}). Run ./scripts/vaibot-guard configure now? [y/N]: `,
+        )
+      )
+        .trim()
+        .toLowerCase();
       if (ans === "y" || ans === "yes") {
         // Re-run configure in-process by setting flags for cmdConfigure.
         flags.env_file = envFile;
@@ -244,7 +251,7 @@ async function cmdInstallLocal() {
     // This avoids relying on shipping any `*.service` (or template) files in the skill package.
     const unitTemplate = `[Unit]\nDescription=VAIBot Guard policy service (user)\nAfter=network-online.target openclaw-gateway.service\nWants=openclaw-gateway.service\nPartOf=openclaw-gateway.service\n\n[Service]\nType=simple\n# Clawhub installs to ~/clawd/skills/<slug> by default\nWorkingDirectory=%h/clawd/skills/vaibot-guard\nEnvironmentFile=%h/.config/vaibot-guard/vaibot-guard.env\nExecStart=/usr/bin/env node scripts/vaibot-guard-service.mjs\nRestart=on-failure\nRestartSec=2\n\n# Hardening (user-scope, safe defaults)\nNoNewPrivileges=true\nPrivateTmp=true\n\n[Install]\nWantedBy=default.target\n`;
 
-    const envTemplate = `# VAIBot Guard (user service) environment\n\n# Required for service auth (recommended)\n# VAIBOT_GUARD_TOKEN=\n\n# Policy file\n# VAIBOT_POLICY_PATH=references/policy.default.json\n\n# Service bind\n# VAIBOT_GUARD_HOST=127.0.0.1\n# VAIBOT_GUARD_PORT=39111\n\n# Workspace + logs\n# VAIBOT_WORKSPACE=\n# VAIBOT_GUARD_LOG_DIR=\n\n# VAIBot anchoring\n# VAIBOT_API_URL=https://www.vaibot.io/api\n# VAIBOT_API_KEY=\n# VAIBOT_PROVE_MODEL=vaibot-guard\n# VAIBOT_PROVE_MODE=required\n\n# Checkpoint cadence\n# VAIBOT_MERKLE_CHECKPOINT_EVERY=50\n# VAIBOT_MERKLE_CHECKPOINT_EVERY_MS=600000\n`;
+    const envTemplate = `# VAIBot Guard (user service) environment\n\n# Required for service auth (recommended)\n# VAIBOT_GUARD_TOKEN=\n\n# Policy file\n# VAIBOT_POLICY_PATH=references/policy.default.json\n\n# Service bind\n# VAIBOT_GUARD_HOST=127.0.0.1\n# VAIBOT_GUARD_PORT=39111\n\n# Workspace + logs\n# VAIBOT_WORKSPACE=\n# VAIBOT_GUARD_LOG_DIR=\n\n# VAIBot anchoring\n# VAIBOT_API_URL=https://www.vaibot.io/api\n# VAIBOT_API_KEY=\n# VAIBOT_PROVE_MODEL=vaibot-guard\n# VAIBOT_PROVE_MODE=best-effort\n\n# Checkpoint cadence\n# VAIBOT_MERKLE_CHECKPOINT_EVERY=50\n# VAIBOT_MERKLE_CHECKPOINT_EVERY_MS=600000\n`;
     const unitDstDir = path.join(os.homedir(), ".config", "systemd", "user");
     const unitDst = path.join(unitDstDir, "vaibot-guard.service");
     const envDstDir = path.join(os.homedir(), ".config", "vaibot-guard");
@@ -315,11 +322,13 @@ async function cmdConfigure() {
     const current = parseEnvFile(envFile);
 
     // Required user-defined value
-    const apiKey = current.VAIBOT_API_KEY || (await rl.question("VAIBOT_API_KEY (required): ")).trim();
-    if (!apiKey) die("VAIBOT_API_KEY is required");
+    // Prove/anchoring mode. Keep defaults non-annoying: anchoring is optional.
+    const proveMode = (current.VAIBOT_PROVE_MODE || (await rl.question("VAIBOT_PROVE_MODE (optional, default best-effort) [required|best-effort|off]: ")).trim()) || "best-effort";
 
-    // Optional values
-    const proveMode = (current.VAIBOT_PROVE_MODE || (await rl.question("VAIBOT_PROVE_MODE (optional, default required) [required|best-effort|off]: ")).trim()) || "required";
+    // VAIBot anchoring credentials are optional unless prove mode is required.
+    const apiKeyPrompt = proveMode === "required" ? "VAIBOT_API_KEY (required): " : "VAIBOT_API_KEY (optional, press enter to skip): ";
+    const apiKey = current.VAIBOT_API_KEY || (await rl.question(apiKeyPrompt)).trim();
+    if (proveMode === "required" && !apiKey) die("VAIBOT_API_KEY is required when VAIBOT_PROVE_MODE=required");
 
     const portIn = (current.VAIBOT_GUARD_PORT || (await rl.question("VAIBOT_GUARD_PORT (optional, default 39111): ")).trim());
     const guardPort = portIn ? String(Number(portIn)) : "39111";
@@ -332,7 +341,7 @@ async function cmdConfigure() {
     const content =
       "# VAIBot Guard environment\n" +
       `VAIBOT_API_URL=${apiUrl}\n` +
-      `VAIBOT_API_KEY=${apiKey}\n` +
+      (apiKey ? `VAIBOT_API_KEY=${apiKey}\n` : "") +
       `VAIBOT_PROVE_MODE=${proveMode}\n` +
       `VAIBOT_GUARD_PORT=${guardPort}\n` +
       `VAIBOT_GUARD_TOKEN=${guardToken}\n`;
